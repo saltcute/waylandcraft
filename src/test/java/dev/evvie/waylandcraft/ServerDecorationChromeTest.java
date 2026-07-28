@@ -12,8 +12,8 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Drives shipped {@link ServerDecorationChrome} layout used by the display
- * paint/pick path for SSD-mapped windows.
+ * Drives shipped {@link ServerDecorationChrome} layout used by world + 2D
+ * paint/pick paths for SSD-mapped windows.
  */
 public class ServerDecorationChromeTest {
 	
@@ -49,6 +49,19 @@ public class ServerDecorationChromeTest {
 	}
 	
 	@Test
+	void outerOriginMatchesContentInset() {
+		int contentOriginX = 100;
+		int contentOriginY = 200;
+		assertEquals(contentOriginX - ServerDecorationChrome.contentOffsetX(),
+				ServerDecorationChrome.outerOriginX(contentOriginX));
+		assertEquals(contentOriginY - ServerDecorationChrome.contentOffsetY(),
+				ServerDecorationChrome.outerOriginY(contentOriginY));
+		// Round-trip: outer + inset = content
+		int outerX = ServerDecorationChrome.outerOriginX(contentOriginX);
+		assertEquals(contentOriginX, outerX + ServerDecorationChrome.contentOffsetX());
+	}
+	
+	@Test
 	void chromeVsContentHitRegions() {
 		int cw = 400;
 		int ch = 300;
@@ -74,7 +87,7 @@ public class ServerDecorationChromeTest {
 	}
 	
 	@Test
-	void displayPathInvokesChromeDrawing() throws IOException {
+	void worldDisplayPathInvokesChromeDrawing() throws IOException {
 		Path root = projectRoot();
 		String abstractSrc = Files.readString(
 				root.resolve("src/main/java/dev/evvie/waylandcraft/displays/AbstractWindowDisplay.java"),
@@ -88,13 +101,46 @@ public class ServerDecorationChromeTest {
 		
 		assertTrue(
 				abstractSrc.contains("ServerDecorationChrome") || windowSrc.contains("ServerDecorationChrome"),
-				"display path must reference ServerDecorationChrome");
+				"world display path must reference ServerDecorationChrome");
 		assertTrue(
-				abstractSrc.contains("renderServerChrome") || windowSrc.contains("renderServerChrome")
-						|| renderUtils.contains("renderServerChrome"),
-				"must invoke chrome drawing helper on live path");
-		assertTrue(renderUtils.contains("renderServerChrome") || renderUtils.contains("renderSolidQuad"),
-				"RenderUtils must provide solid chrome drawing");
+				abstractSrc.contains("renderServerChrome") || windowSrc.contains("renderServerChrome"),
+				"world path must invoke 3D chrome drawing helper");
+		assertTrue(renderUtils.contains("renderServerChrome"),
+				"RenderUtils must provide 3D chrome drawing");
+	}
+	
+	/**
+	 * Gate: world-only chrome is insufficient. Window-manager 2D blit and HUD
+	 * pinned toplevel must also draw SSD chrome when active.
+	 */
+	@Test
+	void allPrimaryPresentationPathsDrawChrome() throws IOException {
+		Path root = projectRoot();
+		String world = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/displays/AbstractWindowDisplay.java"),
+				StandardCharsets.UTF_8);
+		String wm = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/gui/WindowManagerScreen.java"),
+				StandardCharsets.UTF_8);
+		String hud = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/gui/WaylandHudRenderer.java"),
+				StandardCharsets.UTF_8);
+		String renderUtils = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/render/RenderUtils.java"),
+				StandardCharsets.UTF_8);
+		
+		assertTrue(world.contains("renderServerChrome"),
+				"in-world mapped-window path must draw chrome");
+		assertTrue(renderUtils.contains("renderServerChrome2D"),
+				"must provide 2D chrome helper for GUI paths");
+		assertTrue(wm.contains("renderServerChrome2D"),
+				"WindowManagerScreen must draw SSD chrome (world-only fails this gate)");
+		assertTrue(wm.contains("ServerDecorationChrome"),
+				"WindowManagerScreen must use shared chrome layout");
+		assertTrue(wm.contains("isInChrome") || wm.contains("shouldDrawForToplevel"),
+				"WindowManagerScreen pointer path must honor chrome insets");
+		assertTrue(hud.contains("renderServerChrome2D"),
+				"HUD pinned-toplevel path must draw SSD chrome");
 	}
 	
 	private static Path projectRoot() {

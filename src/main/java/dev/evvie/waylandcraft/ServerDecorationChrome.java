@@ -1,9 +1,11 @@
 package dev.evvie.waylandcraft;
 
+import dev.evvie.waylandcraft.bridge.WLCToplevel;
+
 /**
  * Pure layout for compositor-drawn server-side decoration (SSD) chrome.
- * Used by the live display paint path and pointer pick so content and chrome
- * share one inset basis.
+ * Used by the live display paint path, 2D window-manager/HUD blit paths, and
+ * pointer pick so content and chrome share one inset basis.
  *
  * <p>Outer frame = content size expanded by {@link #insets()}. Content sits at
  * ({@link #contentOffsetX()}, {@link #contentOffsetY()}) within the outer rect.
@@ -47,12 +49,30 @@ public final class ServerDecorationChrome {
 		return DecorationsPolicy.supportsServerSide();
 	}
 	
+	/**
+	 * Whether a mapped top-level should receive compositor chrome on primary
+	 * presentation paths. Fullscreen windows fill the plane without a frame.
+	 */
+	public static boolean shouldDrawForToplevel(WLCToplevel toplevel) {
+		return isActive() && toplevel != null && !toplevel.fullscreen;
+	}
+	
 	public static int contentOffsetX() {
 		return insets().left;
 	}
 	
 	public static int contentOffsetY() {
 		return insets().top;
+	}
+	
+	/** Outer-frame X for a content-origin X (shared by world + 2D paint/pick). */
+	public static int outerOriginX(int contentOriginX) {
+		return contentOriginX - contentOffsetX();
+	}
+	
+	/** Outer-frame Y for a content-origin Y. */
+	public static int outerOriginY(int contentOriginY) {
+		return contentOriginY - contentOffsetY();
 	}
 	
 	/** Outer display width for a content rect of the given width. */

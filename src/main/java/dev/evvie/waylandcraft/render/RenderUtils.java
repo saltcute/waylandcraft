@@ -225,6 +225,36 @@ public class RenderUtils {
 		context.blit(framebuffer.getTextureLocation(), x, y, x + w, y + h, 0.0f, 1.0f, 0.0f, 1.0f);
 	}
 	
+	/**
+	 * 2D SSD chrome for window-manager / HUD paths. Same layout as
+	 * {@link #renderServerChrome} (titlebar + borders + accent) via GUI fills.
+	 * {@code outerX}/{@code outerY} are the outer-frame top-left in the same
+	 * pixel basis as {@link #renderFramebuffer2D}.
+	 */
+	public static void renderServerChrome2D(GuiGraphicsExtractor context, int outerX, int outerY, int contentWidth, int contentHeight) {
+		int outerW = dev.evvie.waylandcraft.ServerDecorationChrome.outerWidth(contentWidth);
+		int outerH = dev.evvie.waylandcraft.ServerDecorationChrome.outerHeight(contentHeight);
+		int titleH = dev.evvie.waylandcraft.ServerDecorationChrome.TITLEBAR_HEIGHT;
+		int contentOx = dev.evvie.waylandcraft.ServerDecorationChrome.contentOffsetX();
+		int contentOy = dev.evvie.waylandcraft.ServerDecorationChrome.contentOffsetY();
+		
+		// Outer frame backdrop (sides/bottom remain as border around content)
+		context.fill(outerX, outerY, outerX + outerW, outerY + outerH,
+				dev.evvie.waylandcraft.ServerDecorationChrome.BORDER_COLOR);
+		// Titlebar
+		context.fill(outerX, outerY, outerX + outerW, outerY + titleH,
+				dev.evvie.waylandcraft.ServerDecorationChrome.TITLEBAR_COLOR);
+		// Accent under titlebar
+		int accentH = 2;
+		context.fill(outerX, outerY + titleH - accentH, outerX + outerW, outerY + titleH,
+				dev.evvie.waylandcraft.ServerDecorationChrome.ACCENT_COLOR);
+		// Dark underlay in content hole
+		context.fill(outerX + contentOx, outerY + contentOy,
+				outerX + contentOx + Math.max(0, contentWidth),
+				outerY + contentOy + Math.max(0, contentHeight),
+				0xFF0D0D0D);
+	}
+	
 	public static void renderLineStrip(PoseStack poseStack, SubmitNodeCollector collector, Vec3[] points, int color, float width) {
 		collector.submitCustomGeometry(poseStack, RenderTypes.lines(), new LineStripDraw(points, color, width));
 	}

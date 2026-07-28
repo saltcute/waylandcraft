@@ -10,6 +10,7 @@ import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix3x2fStack;
 import org.lwjgl.glfw.GLFW;
 
+import dev.evvie.waylandcraft.ServerDecorationChrome;
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.WaylandCraftCommon;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow;
@@ -320,6 +321,17 @@ public class WindowManagerScreen extends Screen {
 				WindowFramebuffer buf = element.window.framebuffer;
 				if(buf == null) continue;
 				
+				// SSD chrome before client content so the frame sits around geometry.
+				if(element.window instanceof WLCToplevel tl && ServerDecorationChrome.shouldDrawForToplevel(tl)) {
+					int contentW = tl.geometry.width();
+					int contentH = tl.geometry.height();
+					int contentX = (int) element.x + tl.geometry.x();
+					int contentY = (int) element.y + tl.geometry.y();
+					int outerX = ServerDecorationChrome.outerOriginX(contentX);
+					int outerY = ServerDecorationChrome.outerOriginY(contentY);
+					RenderUtils.renderServerChrome2D(context, outerX, outerY, contentW, contentH);
+				}
+				
 				int x = (int) element.x - buf.getXOff();
 				int y = (int) element.y - buf.getYOff();
 				int w = buf.getWidth();
@@ -374,6 +386,21 @@ public class WindowManagerScreen extends Screen {
 	private HoveredSurface surfaceUnderPointer(double x, double y) {
 		for(int i = windows.size() - 1; i >= 0; i--) {
 			WindowElement element = windows.get(i);
+			
+			// Clicks on SSD chrome (titlebar/border) must not reach client surfaces.
+			// Same inset basis as paint: content origin at element + geometry, outer frame around it.
+			if(element.window instanceof WLCToplevel tl && ServerDecorationChrome.shouldDrawForToplevel(tl)) {
+				int contentW = tl.geometry.width();
+				int contentH = tl.geometry.height();
+				double contentX = element.x + tl.geometry.x();
+				double contentY = element.y + tl.geometry.y();
+				double outerLocalX = x - (contentX - ServerDecorationChrome.contentOffsetX());
+				double outerLocalY = y - (contentY - ServerDecorationChrome.contentOffsetY());
+				if(ServerDecorationChrome.isInChrome(outerLocalX, outerLocalY, contentW, contentH)) {
+					// Consume chrome hit (no client input) without falling through to surface coords.
+					return null;
+				}
+			}
 			
 			float sx = (float) x - element.x;
 			float sy = (float) y - element.y;
@@ -584,14 +611,25 @@ public class WindowManagerScreen extends Screen {
 		float y;
 		
 		if(!toplevel.fullscreen || !captureModeEnabled) {
-			x = leftMargin * guiScale + Math.max(0, areaWidth * guiScale / 2 - toplevel.geometry.width() / 2);
-			y = topMargin * guiScale + Math.max(0, areaHeight * guiScale / 2 - toplevel.geometry.height() / 2);
+			int contentW = toplevel.geometry.width();
+			int contentH = toplevel.geometry.height();
+			// Center outer frame (content + SSD chrome) so the decorator is not clipped.
+			boolean ssd = ServerDecorationChrome.shouldDrawForToplevel(toplevel);
+			int placeW = ssd ? ServerDecorationChrome.outerWidth(contentW) : contentW;
+			int placeH = ssd ? ServerDecorationChrome.outerHeight(contentH) : contentH;
+			x = leftMargin * guiScale + Math.max(0, areaWidth * guiScale / 2 - placeW / 2f);
+			y = topMargin * guiScale + Math.max(0, areaHeight * guiScale / 2 - placeH / 2f);
+			if(ssd) {
+				x += ServerDecorationChrome.contentOffsetX();
+				y += ServerDecorationChrome.contentOffsetY();
+			}
 		}
 		else {
 			x = 0;
 			y = 0;
 		}
 		
+		// Content origin → surface origin (same CSD geometry basis as paint/pick).
 		x -= toplevel.geometry.x();
 		y -= toplevel.geometry.y();
 		

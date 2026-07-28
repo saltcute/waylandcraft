@@ -6,6 +6,7 @@ import java.util.Calendar;
 import org.joml.Matrix3x2fStack;
 
 import dev.evvie.waylandcraft.KeyboardCapture;
+import dev.evvie.waylandcraft.ServerDecorationChrome;
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.WaylandCraftCommon;
 import dev.evvie.waylandcraft.bridge.IconSurface;
@@ -103,6 +104,7 @@ public class WaylandHudRenderer {
 			
 			SurfaceGeometry geometry = wlc.pinnedToplevel.geometry;
 			
+			// Content placement: geometry origin at (0,0) after CSD offset.
 			int x = dev.evvie.waylandcraft.WindowGeometryMapping.renderOffsetX(buf.getXOff(), geometry.x());
 			int y = dev.evvie.waylandcraft.WindowGeometryMapping.renderOffsetY(buf.getYOff(), geometry.y());
 			int w = buf.getWidth();
@@ -111,6 +113,14 @@ public class WaylandHudRenderer {
 			Matrix3x2fStack stack = context.pose();
 			stack.pushMatrix();
 			stack.scale(1.0f / guiScale * 0.5f, 1.0f / guiScale * 0.5f);
+			if(ServerDecorationChrome.shouldDrawForToplevel(wlc.pinnedToplevel)) {
+				int contentW = geometry.width();
+				int contentH = geometry.height();
+				// Outer frame at (0,0); content hole inset — same layout as WM 2D path.
+				RenderUtils.renderServerChrome2D(context, 0, 0, contentW, contentH);
+				x += ServerDecorationChrome.contentOffsetX();
+				y += ServerDecorationChrome.contentOffsetY();
+			}
 			RenderUtils.renderFramebuffer2D(context, buf, x, y, w, h);
 			stack.popMatrix();
 		}

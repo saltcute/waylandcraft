@@ -45,9 +45,7 @@ public class WindowDisplay extends AbstractWindowDisplay {
 	protected boolean usesServerChrome() {
 		// Top-level windows get system chrome when SSD policy is active.
 		// Popups stay content-only. Fullscreen fills the plane without frame.
-		if(!(window instanceof WLCToplevel toplevel)) return false;
-		if(toplevel.fullscreen) return false;
-		return ServerDecorationChrome.isActive();
+		return window instanceof WLCToplevel toplevel && ServerDecorationChrome.shouldDrawForToplevel(toplevel);
 	}
 	
 	@Override
