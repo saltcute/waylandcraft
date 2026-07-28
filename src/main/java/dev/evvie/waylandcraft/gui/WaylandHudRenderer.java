@@ -5,8 +5,8 @@ import java.util.Calendar;
 
 import org.joml.Matrix3x2fStack;
 
+import dev.evvie.waylandcraft.KeyboardCapture;
 import dev.evvie.waylandcraft.WaylandCraft;
-import dev.evvie.waylandcraft.WaylandCraft.KeyboardCaptureMode;
 import dev.evvie.waylandcraft.WaylandCraftCommon;
 import dev.evvie.waylandcraft.bridge.IconSurface;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow.SurfaceGeometry;
@@ -49,12 +49,12 @@ public class WaylandHudRenderer {
 		int yoff = 30;
 		int ystep = font.lineHeight + 2;
 		
-		if(WaylandCraft.instance.keyboardCaptureMode == KeyboardCaptureMode.CAPTURE) {
+		if(WaylandCraft.instance.keyboardCapture.mode() == KeyboardCapture.Mode.CAPTURE) {
 			String text = "KEYBOARD CAPTURED [PRESS ESCAPE]";
 			context.text(font, text, context.guiWidth() - font.width(text) - 10, yoff, Color.red.getRGB(), true);
 			yoff += ystep;
 		}
-		else if(WaylandCraft.instance.keyboardCaptureMode == KeyboardCaptureMode.HARD_CAPTURE) {
+		else if(WaylandCraft.instance.keyboardCapture.mode() == KeyboardCapture.Mode.HARD_CAPTURE) {
 			String text = "KEYBOARD CAPTURED [PRESS ALT+Q]";
 			context.text(font, text, context.guiWidth() - font.width(text) - 10, yoff, Color.red.getRGB(), true);
 			yoff += ystep;

@@ -100,7 +100,51 @@ public class WaylandCraft implements ClientModInitializer {
 	// Only non-null, when no exclusive pointer grabs are currently active
 	public DisplayHitResult hoveredDisplay = null;
 	
-	public KeyboardCaptureMode keyboardCaptureMode = KeyboardCaptureMode.NONE;
+	/** Shipped keyboard capture state machine (soft/hard). */
+	public final KeyboardCapture keyboardCapture = new KeyboardCapture();
+	
+	/** Bridge adapter used by {@link #keyboardCapture}. */
+	private final KeyboardCapture.Target keyboardCaptureTarget = new KeyboardCapture.Target() {
+		@Override
+		public void activateKeyboard() {
+			if(bridge != null) bridge.activateKeyboard();
+		}
+		
+		@Override
+		public void deactivateKeyboard() {
+			if(bridge != null) bridge.deactivateKeyboard();
+		}
+		
+		@Override
+		public void pressKey(int scancode) {
+			if(bridge != null) bridge.pressKey(scancode);
+		}
+		
+		@Override
+		public void releaseKey(int scancode) {
+			if(bridge != null) bridge.releaseKey(scancode);
+		}
+	};
+	
+	/**
+	 * Optional override of the keyboard target for unit tests that drive
+	 * {@link #onKeyPress} without a live native bridge.
+	 */
+	KeyboardCapture.Target testKeyboardTarget = null;
+	
+	private KeyboardCapture.Target keyboardTarget() {
+		return testKeyboardTarget != null ? testKeyboardTarget : keyboardCaptureTarget;
+	}
+	
+	/** @deprecated use {@link #keyboardCapture}{@code .mode()} */
+	@Deprecated
+	public KeyboardCaptureMode getKeyboardCaptureMode() {
+		return switch(keyboardCapture.mode()) {
+			case NONE -> KeyboardCaptureMode.NONE;
+			case CAPTURE -> KeyboardCaptureMode.CAPTURE;
+			case HARD_CAPTURE -> KeyboardCaptureMode.HARD_CAPTURE;
+		};
+	}
 	
 	public PointerCapture pointerCapture = null;
 	
@@ -201,7 +245,7 @@ public class WaylandCraft implements ClientModInitializer {
 		
 		itemManager.giveItemsIfMissing(bridge.getNewToplevels());
 		
-		boolean inWMScreen = Minecraft.getInstance().screen instanceof WindowManagerScreen;
+		boolean inWMScreen = Minecraft.getInstance().gui.screen() instanceof WindowManagerScreen;
 		
 		// Make sure the toplevels are focused in their respective order and being refocused when a toplevel disappears
 		if(!inWMScreen) {
@@ -245,17 +289,12 @@ public class WaylandCraft implements ClientModInitializer {
 	}
 	
 	public void enableKeyboardCapture(boolean hardCapture) {
-		if(keyboardCaptureMode != KeyboardCaptureMode.NONE) return;
-		
-		keyboardCaptureMode = hardCapture ? KeyboardCaptureMode.HARD_CAPTURE : KeyboardCaptureMode.CAPTURE;
-		bridge.activateKeyboard();
+		keyboardCapture.enable(hardCapture, keyboardTarget());
 	}
 	
 	public void disableKeyboardCapture() {
-		if(keyboardCaptureMode == KeyboardCaptureMode.NONE) return;
-		
-		keyboardCaptureMode = KeyboardCaptureMode.NONE;
-		bridge.deactivateKeyboard();
+		if(!keyboardCapture.isActive()) return;
+		keyboardCapture.disable(keyboardTarget());
 		disablePointerCapture();
 	}
 	
@@ -266,12 +305,14 @@ public class WaylandCraft implements ClientModInitializer {
 		
 	private void checkKeybinds(Minecraft minecraft) {
 		if(keyOpenScreen.consumeClick()) {
-			keyboardCaptureMode = KeyboardCaptureMode.NONE;
+			if(keyboardCapture.isActive()) {
+				keyboardCapture.disable(keyboardTarget());
+			}
 			pointerGrabs.releaseAll();
-			minecraft.setScreen(new WindowManagerScreen(WaylandCraft.instance));
+			minecraft.gui.setScreen(new WindowManagerScreen(WaylandCraft.instance));
 		}
 		else if(keyOpenAppLauncher.consumeClick()) {
-			minecraft.setScreen(new AppLauncherScreen(WaylandCraft.instance));
+			minecraft.gui.setScreen(new AppLauncherScreen(WaylandCraft.instance));
 		}
 		else if(keyCaptureKeyboard.consumeClick()) {
 			enableKeyboardCapture(false);
@@ -279,8 +320,8 @@ public class WaylandCraft implements ClientModInitializer {
 	}
 	
 	private void onClientJoin(ClientPacketListener listener, PacketSender sender, Minecraft minecraft) {
-		minecraft.getChatListener().handleSystemMessage(Component.literal("Wayland compositor running on " + waylandSocket), false);
-		if(x11Display != null) minecraft.getChatListener().handleSystemMessage(Component.literal("xwayland-satellite running on " + x11Display), false);
+		minecraft.gui.chatListener().handleSystemMessage(Component.literal("Wayland compositor running on " + waylandSocket), false);
+		if(x11Display != null) minecraft.gui.chatListener().handleSystemMessage(Component.literal("xwayland-satellite running on " + x11Display), false);
 		itemManager.giveItemsIfMissing(bridge.getMappedToplevels());
 	}
 	
@@ -461,10 +502,10 @@ public class WaylandCraft implements ClientModInitializer {
 		this.hoveredDisplay = null;
 		this.overridePickBlock = false;
 		
-		if(Minecraft.getInstance().screen instanceof WindowManagerScreen) {
+		if(Minecraft.getInstance().gui.screen() instanceof WindowManagerScreen) {
 			return;
 		}
-		else if(Minecraft.getInstance().screen != null) {
+		else if(Minecraft.getInstance().gui.screen() != null) {
 			pointerGrabs.releaseAll();
 			bridge.sendMotionOutside();
 			return;
@@ -529,7 +570,7 @@ public class WaylandCraft implements ClientModInitializer {
 			this.cursorShape = bridge.getCursorShape();
 			bridge.sendMotionRefocus(surface, rel.x, rel.y);
 			
-			if(keyboardCaptureMode != KeyboardCaptureMode.NONE && bridge.maybeLockPointer(surface)) {
+			if(keyboardCapture.isActive() && bridge.maybeLockPointer(surface)) {
 				pointerCapture = new PointerCapture(surface, rel.x, rel.y);
 			}
 			
@@ -656,35 +697,16 @@ public class WaylandCraft implements ClientModInitializer {
 	 * For X11 and Wayland hosts, this is a huge hack but should mostly work for now
 	 */
 	public boolean onKeyPress(long windowHandle, int key, int scancode, int action, int modifiers) {
-		if(bridge == null) return false;
+		// Production requires a live bridge; tests may supply testKeyboardTarget alone.
+		if(bridge == null && testKeyboardTarget == null) return false;
 		
-		if(key == GLFW.GLFW_KEY_Q && modifiers == GLFW.GLFW_MOD_ALT) {
-			if(action == 0) return true;
-			
-			if(keyboardCaptureMode != KeyboardCaptureMode.HARD_CAPTURE) {
-				enableKeyboardCapture(true);
-			}
-			else {
-				disableKeyboardCapture();
-			}
-			return true;
+		KeyboardCapture.Mode before = keyboardCapture.mode();
+		boolean consumed = keyboardCapture.onKeyPress(key, scancode, action, modifiers, keyboardTarget());
+		// Soft/hard capture disable also releases pointer capture
+		if(before != KeyboardCapture.Mode.NONE && keyboardCapture.mode() == KeyboardCapture.Mode.NONE) {
+			disablePointerCapture();
 		}
-		
-		if(keyboardCaptureMode == KeyboardCaptureMode.NONE) return false;
-		
-		if(keyboardCaptureMode == KeyboardCaptureMode.CAPTURE && key == GLFW.GLFW_KEY_ESCAPE) {
-			disableKeyboardCapture();
-			return true;
-		}
-		
-		if(action == GLFW.GLFW_PRESS) {
-			bridge.pressKey(scancode);
-		}
-		else if(action == GLFW.GLFW_RELEASE) {
-			bridge.releaseKey(scancode);
-		}
-		
-		return true;
+		return consumed;
 	}
 	
 	public static int correctScancode(int scancode) {
