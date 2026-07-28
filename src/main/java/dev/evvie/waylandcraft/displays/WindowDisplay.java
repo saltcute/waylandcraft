@@ -69,8 +69,12 @@ public class WindowDisplay extends AbstractWindowDisplay {
 		Vec3 hitPos = intersection.world();
 		Vec3 geometryLocal = intersection.local();
 		
-		// Change from relative to geometry origin (our plane local) to surface-local coords
-		Vec3 localCoords = geometryLocal.add(window.geometry.x(), window.geometry.y(), 0);
+		// Same CSD mapping as AbstractWindowDisplay render placement (WindowGeometryMapping).
+		Vec3 localCoords = new Vec3(
+				dev.evvie.waylandcraft.WindowGeometryMapping.toSurfaceLocalX(geometryLocal.x, window.geometry.x()),
+				dev.evvie.waylandcraft.WindowGeometryMapping.toSurfaceLocalY(geometryLocal.y, window.geometry.y()),
+				geometryLocal.z
+		);
 		
 		double dist = intersection.dist();
 		

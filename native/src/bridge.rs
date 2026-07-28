@@ -311,6 +311,14 @@ bind_java_type! {
             sig = (instance: jlong, width: jint, height: jint),
             fn = output_set_bounds,
         },
+        static extern fn output_scale {
+            sig = (instance: jlong) -> jint,
+            fn = output_scale,
+        },
+        static extern fn output_set_scale {
+            sig = (instance: jlong, scale: jint) -> jint,
+            fn = output_set_scale,
+        },
         static extern fn free_surface {
             sig = (instance: jlong, surface_handle: jlong),
             fn = free_surface,
@@ -788,13 +796,20 @@ fn try_attach_shm(
     jsurface: &WLCSurface,
     buf: &WlBuffer,
     surf_data: &SurfaceData,
+    buffer_scale: i32,
 ) -> BufferAttachResult {
     let r = with_buffer_contents(buf, |ptr, _len, metadata| {
         let width = metadata.width as jint;
         let height = metadata.height as jint;
         let format = (metadata.format as u32) as jint;
         let stride = metadata.stride as jint;
-        ensure_viewport_valid(surf_data, Size::new(width, height));
+        // Logical content size for ensure_viewport_valid. Scale is passed in —
+        // must NOT re-lock SurfaceAttributes here: caller already holds that mutex.
+        let scale = buffer_scale.max(1);
+        ensure_viewport_valid(
+            surf_data,
+            Size::new((width / scale).max(1), (height / scale).max(1)),
+        );
 
         let ptr =
             unsafe { ptr.offset(metadata.offset as isize) }.addr() as jlong;
@@ -819,6 +834,7 @@ fn try_attach_single_pixel(
     jsurface: &WLCSurface,
     buf: &WlBuffer,
     surf_data: &SurfaceData,
+    _buffer_scale: i32,
 ) -> BufferAttachResult {
     let pix = match get_single_pixel_buffer(buf) {
         Ok(p) => p,
@@ -845,6 +861,7 @@ fn try_attach_dmabuf(
     jsurface: &WLCSurface,
     buf: &WlBuffer,
     surf_data: &SurfaceData,
+    buffer_scale: i32,
 ) -> BufferAttachResult {
     let dmabuf = match get_dmabuf(buf) {
         Ok(d) => d,
@@ -853,7 +870,12 @@ fn try_attach_dmabuf(
 
     let width = dmabuf.width() as jint;
     let height = dmabuf.height() as jint;
-    ensure_viewport_valid(surf_data, Size::new(width, height));
+    // Scale passed from caller — do not re-lock SurfaceAttributes (deadlock).
+    let scale = buffer_scale.max(1);
+    ensure_viewport_valid(
+        surf_data,
+        Size::new((width / scale).max(1), (height / scale).max(1)),
+    );
 
     let weak = dmabuf.weak();
     let handle = insert_get_handle(&mut instance.bridge.dmabufs, &weak);
@@ -897,6 +919,7 @@ fn try_attach_buffer(
     jsurface: &WLCSurface,
     buf: &WlBuffer,
     surf_data: &SurfaceData,
+    buffer_scale: i32,
 ) -> Result<(), ()> {
     type TryAttachFn = fn(
         instance: &mut WaylandCraft,
@@ -904,12 +927,13 @@ fn try_attach_buffer(
         jsurface: &WLCSurface,
         buf: &WlBuffer,
         surf_data: &SurfaceData,
+        buffer_scale: i32,
     ) -> BufferAttachResult;
 
     let funcs: [TryAttachFn; 3] =
         [try_attach_shm, try_attach_single_pixel, try_attach_dmabuf];
     for func in funcs {
-        let result = func(instance, env, jsurface, buf, surf_data);
+        let result = func(instance, env, jsurface, buf, surf_data, buffer_scale);
         match result {
             BufferAttachResult::NotManaged => continue,
             BufferAttachResult::Success => return Ok(()),
@@ -937,6 +961,10 @@ fn update_surface_data<'local>(
         let mut attr_guard = data.cached_state.get::<SurfaceAttributes>();
         let attr = attr_guard.deref_mut().current();
 
+        // Apply client buffer_scale before attach so logical size = buffer / scale.
+        let buffer_scale = attr.buffer_scale.max(1);
+        jsurface.set_buffer_scale(env, buffer_scale).unwrap();
+
         let (maybe_buf, mut remove_buf) = if let Some(assign) = &attr.buffer {
             match assign {
                 BufferAssignment::NewBuffer(b) => (Some(b), false),
@@ -947,7 +975,9 @@ fn update_surface_data<'local>(
         };
 
         if let Some(buf) = maybe_buf {
-            let r = try_attach_buffer(instance, env, &jsurface, buf, data);
+            // Pass buffer_scale: try_attach must not re-lock SurfaceAttributes
+            // while we hold attr_guard (smithay CachedState uses non-reentrant Mutex).
+            let r = try_attach_buffer(instance, env, &jsurface, buf, data, buffer_scale);
             if r.is_err() {
                 eprintln!("Buffer attach failed!");
                 remove_buf = true;
@@ -974,6 +1004,9 @@ fn update_surface_data<'local>(
                     env, src.loc.x, src.loc.y, src.size.w, src.size.h,
                 )
                 .unwrap();
+        } else {
+            // Drop stale crop so UV/placement do not keep a previous viewport.
+            jsurface.clear_viewport(env).unwrap();
         }
 
         if let Some(dst) = vp_data.dst {
@@ -1483,10 +1516,11 @@ fn output_resize<'local>(
 
     instance.state.output.resize(width, height);
 
+    let logical = instance.state.output.logical_size();
     for toplevel in instance.state.xdg_state.toplevel_surfaces() {
         toplevel.with_pending_state(|state| {
             if state.states.contains(xdg_toplevel::State::Fullscreen) {
-                state.size = Some(Size::new(width, height));
+                state.size = Some(logical);
             }
         });
 
@@ -1494,6 +1528,43 @@ fn output_resize<'local>(
     }
 
     Ok(())
+}
+
+fn output_scale<'local>(
+    _env: &mut Env<'local>,
+    _class: JClass<'local>,
+    instance: jlong,
+) -> Result<jint, BridgeError> {
+    let instance = jptr_to_instance!(instance, "outputScale")?;
+    Ok(instance.state.output.scale())
+}
+
+fn output_set_scale<'local>(
+    _env: &mut Env<'local>,
+    _class: JClass<'local>,
+    instance: jlong,
+    scale: jint,
+) -> Result<jint, BridgeError> {
+    let instance = jptr_to_instance!(instance, "outputSetScale")?;
+    let previous = instance.state.output.scale();
+    // Non-positive values are clamped to 1 inside set_scale.
+    let effective = instance.state.output.set_scale(scale);
+    if previous != effective {
+        // Reconfigure maximized/fullscreen surfaces for the new logical size.
+        let logical_size = instance.state.output.logical_size();
+        let logical_bounds = instance.state.output.logical_bounds();
+        for toplevel in instance.state.xdg_state.toplevel_surfaces() {
+            toplevel.with_pending_state(|state| {
+                if state.states.contains(xdg_toplevel::State::Fullscreen) {
+                    state.size = Some(logical_size);
+                } else if state.states.contains(xdg_toplevel::State::Maximized) {
+                    state.size = Some(logical_bounds);
+                }
+            });
+            toplevel.send_pending_configure();
+        }
+    }
+    Ok(effective)
 }
 
 fn output_set_bounds<'local>(
@@ -1520,10 +1591,11 @@ fn output_set_bounds<'local>(
 
     instance.state.output.set_bounds(width, height);
 
+    let logical = instance.state.output.logical_bounds();
     for toplevel in instance.state.xdg_state.toplevel_surfaces() {
         toplevel.with_pending_state(|state| {
             if state.states.contains(xdg_toplevel::State::Maximized) {
-                state.size = Some(Size::new(width, height));
+                state.size = Some(logical);
             }
         });
 
@@ -1697,7 +1769,8 @@ fn toplevel_maximize<'local>(
             return;
         }
         let output = &instance.state.output;
-        state.size = Some(output.bounds());
+        // xdg sizes are logical; bounds are stored in physical pixels.
+        state.size = Some(output.logical_bounds());
         state.states.set(xdg_toplevel::State::Maximized);
     });
 
@@ -1716,7 +1789,8 @@ fn toplevel_fullscreen<'local>(
 
     toplevel.with_pending_state(|state| {
         let output = &instance.state.output;
-        state.size = Some(output.size());
+        // xdg sizes are logical; mode size is physical framebuffer pixels.
+        state.size = Some(output.logical_size());
         state.states.set(xdg_toplevel::State::Fullscreen);
     });
 

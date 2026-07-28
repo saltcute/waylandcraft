@@ -26,6 +26,7 @@ bind_java_type! {
             height: jdouble
         ),
         pub fn set_viewport_dst(width: jint, height: jint),
+        pub fn clear_viewport(),
         pub fn attach_shm_buffer(
             ptr: jlong,
             width: jint,
@@ -46,6 +47,10 @@ bind_java_type! {
             width: jint,
             height: jint
         ),
+        /// Set logical surface size after buffer attach (buffer pixels / buffer_scale).
+        pub fn set_logical_size(width: jint, height: jint),
+        /// Remember the client buffer_scale for viewport/damage conversion.
+        pub fn set_buffer_scale(scale: jint),
         pub fn clear_damage(),
         pub fn add_buffer_damage(x: jint, y: jint, width: jint, height: jint),
         pub fn add_surface_damage(x: jint, y: jint, width: jint, height: jint),

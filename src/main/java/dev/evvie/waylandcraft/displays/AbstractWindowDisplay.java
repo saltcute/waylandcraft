@@ -4,6 +4,7 @@ import org.jetbrains.annotations.Nullable;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 
+import dev.evvie.waylandcraft.WindowGeometryMapping;
 import dev.evvie.waylandcraft.math.WorldPlane;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -100,7 +101,10 @@ public abstract class AbstractWindowDisplay {
 		Vec3 cameraPos = ctx.levelState().cameraRenderState.pos;
 		Vec3 originRel = origin().subtract(cameraPos);
 		
-		Vec3 bufOffset = localX.scale(-xoff - geometryX).add(localY.scale(-yoff - geometryY));
+		// Shared CSD mapping: same basis as WindowDisplay.intersect pick path.
+		int placeX = WindowGeometryMapping.renderOffsetX(xoff, geometryX);
+		int placeY = WindowGeometryMapping.renderOffsetY(yoff, geometryY);
+		Vec3 bufOffset = localX.scale(placeX).add(localY.scale(placeY));
 		
 		PoseStack poseStack = ctx.poseStack();
 		poseStack.pushPose();

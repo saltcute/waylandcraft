@@ -210,6 +210,10 @@ public class WaylandCraft implements ClientModInitializer {
 		settingsManager.registerResponder(WaylandCraftSettings.TERMINAL_CHOICE, (value) -> {
 			bridge.setPreferredTerminal((String) value);
 		});
+		settingsManager.registerResponder(WaylandCraftSettings.OUTPUT_SCALE, (value) -> {
+			// setIntSetting already clamps; apply effective scale to the compositor.
+			bridge.setOutputScale(IntegerScale.clamp((Integer) value));
+		});
 	}
 	
 	public void renderWorld(LevelRenderContext ctx) {

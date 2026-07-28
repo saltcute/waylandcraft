@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.jetbrains.annotations.Nullable;
 
+import dev.evvie.waylandcraft.IntegerScale;
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.render.BufferTexture;
 import dev.evvie.waylandcraft.render.BufferTexture.DmabufTexture;
@@ -35,9 +36,12 @@ public class WLCSurface {
 	@Nullable
 	protected WLCSurface parent = null;
 	
-	// Surface size. By default the size of the attached buffer.
+	// Logical surface size (buffer pixels / buffer_scale, or viewport dst).
 	private int width = 0;
 	private int height = 0;
+	
+	/** Client wl_surface buffer_scale used for logical size and damage mapping. */
+	private int bufferScale = 1;
 	
 	@Nullable
 	private ViewportSource sourceView = null;
@@ -70,30 +74,27 @@ public class WLCSurface {
 		return handle != 0;
 	}
 	
-	// Attach a shared memory buffer
-	// The surface width and height are reset to the given buffer dimensions.
+	// Attach a shared memory buffer (texture keeps buffer-pixel dimensions).
+	// Logical surface size is applied via setLogicalSize / setBufferScale from native.
 	protected void attachShmBuffer(long ptr, int width, int height, int format, int stride) {
 		if(this.buffer != null) {
 			this.buffer.release();
 		}
 		this.buffer = new ShmBufferTexture(ptr, width, height, format, stride);
-		this.width = width;
-		this.height = height;
+		applyLogicalSizeFromBuffer(width, height);
 	}
 	
 	// Attach a single pixel buffer
-	// The surface width and height are reset to 1.
+	// The surface width and height are reset to 1 logical pixel.
 	protected void attachSinglePixelBuffer(byte r, byte g, byte b, byte a) {
 		if(this.buffer != null) {
 			this.buffer.release();
 		}
 		this.buffer = new SinglePixelBufferTexture(r, g, b, a);
-		this.width = 1;
-		this.height = 1;
+		applyLogicalSizeFromBuffer(1, 1);
 	}
 	
 	// Attach an already known dmabuf
-	// The surface width and height are reset to the given buffer dimensions.
 	// Returns false if no DmabufTexture by that handle was found.
 	protected boolean attachDmabuf(long handle) {
 		if(this.buffer != null) {
@@ -102,8 +103,7 @@ public class WLCSurface {
 		
 		this.buffer = WaylandCraft.instance.bridge.getDmabuf(handle);
 		if(this.buffer != null) {
-			this.width = buffer.width;
-			this.height = buffer.height;
+			applyLogicalSizeFromBuffer(buffer.width, buffer.height);
 			
 			DmabufTexture dmabuf = (DmabufTexture) this.buffer;
 			dmabuf.copyData();
@@ -125,21 +125,50 @@ public class WLCSurface {
 	protected void removeBuffer() {
 		this.buffer = null;
 		this.width = this.height = 0;
+		this.bufferScale = 1;
 	}
 	
-	// Set viewport source dimensions
-	// Crops the surface to the specified rectangle.
+	/** Called from native with the client's wl_surface buffer_scale. */
+	protected void setBufferScale(int scale) {
+		this.bufferScale = IntegerScale.clamp(scale);
+		if(this.buffer != null) {
+			applyLogicalSizeFromBuffer(this.buffer.width, this.buffer.height);
+		}
+	}
+	
+	/** Explicit logical size (e.g. after computing buffer / scale in native). */
+	protected void setLogicalSize(int width, int height) {
+		this.width = Math.max(0, width);
+		this.height = Math.max(0, height);
+	}
+	
+	private void applyLogicalSizeFromBuffer(int bufferWidth, int bufferHeight) {
+		this.width = IntegerScale.bufferToLogical(bufferWidth, this.bufferScale);
+		this.height = IntegerScale.bufferToLogical(bufferHeight, this.bufferScale);
+	}
+	
+	// Set viewport source crop (smithay ViewportCachedState.src is already Logical /
+	// surface-local after buffer_scale). When dst is not set later, logical size is
+	// the src size as-is — do not divide by bufferScale again.
 	protected void setViewportSrc(double x, double y, double width, double height) {
 		this.sourceView = new ViewportSource(x, y, width, height);
 		this.width = (int) width;
 		this.height = (int) height;
 	}
 	
-	// Set viewport destination dimensions
-	// Overrides this surfaces width & height values.
+	// Set viewport destination dimensions (logical surface coordinates).
+	// Overrides this surface's width & height values.
 	protected void setViewportDst(int width, int height) {
 		this.width = width;
 		this.height = height;
+	}
+	
+	/** Clear viewport crop/dst so size falls back to buffer / buffer_scale. */
+	protected void clearViewport() {
+		this.sourceView = null;
+		if(this.buffer != null) {
+			applyLogicalSizeFromBuffer(this.buffer.width, this.buffer.height);
+		}
 	}
 	
 	protected void clearDamage() {
@@ -181,6 +210,25 @@ public class WLCSurface {
 	
 	public int height() {
 		return height;
+	}
+	
+	/** Client {@code wl_surface} buffer_scale (always ≥ 1). */
+	public int getBufferScale() {
+		return bufferScale;
+	}
+	
+	/**
+	 * Pixel size of this surface in the high-res window composite
+	 * (logical × buffer_scale, or attached buffer dimensions when present).
+	 */
+	public int compositeWidth() {
+		if(buffer != null) return buffer.width;
+		return IntegerScale.compositePixels(width, bufferScale);
+	}
+	
+	public int compositeHeight() {
+		if(buffer != null) return buffer.height;
+		return IntegerScale.compositePixels(height, bufferScale);
 	}
 	
 	public ViewportSource getViewportSource() {

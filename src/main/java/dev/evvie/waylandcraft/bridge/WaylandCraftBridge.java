@@ -447,21 +447,28 @@ public class WaylandCraftBridge {
 	
 	private void updateGeometry(WLCAbstractWindow window) {
 		int[] data = surfaceXDGGeometry(window.surface.getHandle());
-		SurfaceGeometry geometry;
-		
-		if(data == null) {
-			geometry = new SurfaceGeometry(0, 0, window.surface.width(), window.surface.height());
+		SurfaceGeometry clientGeometry = null;
+		if(data != null) {
+			clientGeometry = new SurfaceGeometry(data[0], data[1], data[2], data[3]);
 		}
-		else {
-			geometry = new SurfaceGeometry(data[0], data[1], data[2], data[3]);
-		}
-		
-		window.geometry = geometry;
+		// Normalize missing geometry to full surface; keep CSD content origin for both paint and pick.
+		window.geometry = dev.evvie.waylandcraft.WindowGeometryMapping.effectiveGeometry(
+				clientGeometry, window.surface.width(), window.surface.height());
 	}
 	
 	private void calculateSubpos(WLCSurface surface) {
+		calculateSubpos(surface, 0);
+	}
+	
+	/** Depth-limited to avoid freezing the render thread on a cyclic parent chain. */
+	private void calculateSubpos(WLCSurface surface, int depth) {
+		if(depth > 64) {
+			surface.xSubpos = 0;
+			surface.ySubpos = 0;
+			return;
+		}
 		if(surface.parent != null) {
-			calculateSubpos(surface.parent);
+			calculateSubpos(surface.parent, depth + 1);
 			surface.xSubpos = surface.parent.xSubpos + surface.xoff;
 			surface.ySubpos = surface.parent.ySubpos + surface.yoff;
 		}
@@ -645,6 +652,21 @@ public class WaylandCraftBridge {
 		return new Size(size[0], size[1]);
 	}
 	
+	/**
+	 * Integer scale currently advertised on the virtual {@code wl_output} (always ≥ 1).
+	 */
+	public int getOutputScale() {
+		return outputScale(instance);
+	}
+	
+	/**
+	 * Set the integer scale advertised to Wayland clients.
+	 * Values &lt; 1 are clamped to 1. Returns the effective scale.
+	 */
+	public int setOutputScale(int scale) {
+		return outputSetScale(instance, scale);
+	}
+	
 	public RawDesktopEntry loadDesktopEntry(File path) {
 		return loadDesktopEntry(instance, path.getAbsolutePath());
 	}
@@ -807,6 +829,8 @@ public class WaylandCraftBridge {
 	
 	// Update virtual output dimensions
 	private static native void outputResize(long instance, int width, int height);
+	private static native int outputScale(long instance);
+	private static native int outputSetScale(long instance, int scale);
 	
 	// Update virtual output maximum window bounds
 	private static native void outputSetBounds(long instance, int width, int height);

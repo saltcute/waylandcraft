@@ -83,6 +83,7 @@ public class WaylandCraftSettingsScreen extends Screen {
 		settingsWidgets.clear();
 		
 		createIntSettingsWidget(WaylandCraftSettings.PIXELS_PER_BLOCK, Component.literal("Window display pixels per block"));
+		createIntSettingsWidget(WaylandCraftSettings.OUTPUT_SCALE, Component.literal("Wayland output scale (integer, 1=default)"));
 		createBooleanSettingsWidget(WaylandCraftSettings.FOCUS_ON_HOVER, Component.literal("Focus windows when hovered"));
 		createTextSettingsWidget(WaylandCraftSettings.TERMINAL_CHOICE, Component.literal("Default terminal"));
 	}

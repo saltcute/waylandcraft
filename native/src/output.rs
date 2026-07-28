@@ -13,6 +13,8 @@ pub struct WLCOutput {
     size: Size<i32, Logical>,
     // size of content area
     bounds: Size<i32, Logical>,
+    /// Integer buffer scale advertised to clients (wl_output.scale). Always ≥ 1.
+    scale: i32,
     display_handle: DisplayHandle,
 }
 
@@ -22,6 +24,7 @@ impl WLCOutput {
             outputs: vec![],
             size: Size::new(1920, 1080),
             bounds: Size::new(1920, 1080),
+            scale: 1,
             display_handle: display_handle.clone(),
         }
     }
@@ -37,6 +40,42 @@ impl WLCOutput {
 
     pub fn bounds(&self) -> Size<i32, Logical> {
         self.bounds
+    }
+
+    pub fn scale(&self) -> i32 {
+        self.scale
+    }
+
+    /// Logical size of the mode for xdg configures (physical mode / scale).
+    pub fn logical_size(&self) -> Size<i32, Logical> {
+        Size::new(
+            (self.size.w / self.scale).max(1),
+            (self.size.h / self.scale).max(1),
+        )
+    }
+
+    /// Logical content bounds for maximize configures.
+    pub fn logical_bounds(&self) -> Size<i32, Logical> {
+        Size::new(
+            (self.bounds.w / self.scale).max(1),
+            (self.bounds.h / self.scale).max(1),
+        )
+    }
+
+    /// Clamp and store integer scale (≥ 1). Returns the effective scale.
+    pub fn set_scale(&mut self, scale: i32) -> i32 {
+        let scale = scale.max(1);
+        if self.scale == scale {
+            return self.scale;
+        }
+        self.scale = scale;
+        for output in &self.outputs {
+            if output.version() >= 2 {
+                output.scale(self.scale);
+                output.done();
+            }
+        }
+        self.scale
     }
 
     pub fn resize(&mut self, width: i32, height: i32) {
@@ -90,9 +129,11 @@ impl GlobalDispatch<WlOutput, ()> for WLCState {
         }
 
         if output.version() >= 2 {
-            output.scale(1);
+            output.scale(state.output.scale());
             output.done();
         }
+
+        state.output.outputs.push(output);
     }
 }
 

@@ -103,8 +103,8 @@ public class WaylandHudRenderer {
 			
 			SurfaceGeometry geometry = wlc.pinnedToplevel.geometry;
 			
-			int x = -buf.getXOff() - geometry.x();
-			int y = -buf.getYOff() - geometry.y();
+			int x = dev.evvie.waylandcraft.WindowGeometryMapping.renderOffsetX(buf.getXOff(), geometry.x());
+			int y = dev.evvie.waylandcraft.WindowGeometryMapping.renderOffsetY(buf.getYOff(), geometry.y());
 			int w = buf.getWidth();
 			int h = buf.getHeight();
 			

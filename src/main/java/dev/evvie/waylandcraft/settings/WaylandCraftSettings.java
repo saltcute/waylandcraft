@@ -19,16 +19,20 @@ public class WaylandCraftSettings {
 	 */
 	
 	int pixelsPerBlock = 500;
+	/** Integer Wayland output scale advertised to clients (wl_output.scale). Default 1. */
+	int outputScale = 1;
 	boolean focusOnHover = false;
 	String terminalChoice = "";
 	
 	/* This is where the field names go to avoid typos */
 	public static final String PIXELS_PER_BLOCK = "pixelsPerBlock";
+	public static final String OUTPUT_SCALE = "outputScale";
 	public static final String FOCUS_ON_HOVER = "focusOnHover";
 	public static final String TERMINAL_CHOICE = "terminalChoice";
 	
 	public static final String[] SETTINGS = new String[] {
 			PIXELS_PER_BLOCK,
+			OUTPUT_SCALE,
 			FOCUS_ON_HOVER,
 			TERMINAL_CHOICE
 	};
@@ -37,6 +41,11 @@ public class WaylandCraftSettings {
 	
 	public int getPixelsPerBlock() {
 		return pixelsPerBlock;
+	}
+	
+	public int getOutputScale() {
+		// Gson leaves missing ints as 0 for older settings.json files.
+		return dev.evvie.waylandcraft.IntegerScale.clamp(outputScale);
 	}
 	
 	public boolean getFocusOnHover() {
@@ -51,6 +60,10 @@ public class WaylandCraftSettings {
 	
 	protected void setIntSetting(String name, int value) {
 		try {
+			// Clamp integer scale so invalid values never persist as 0/negative.
+			if(OUTPUT_SCALE.equals(name)) {
+				value = dev.evvie.waylandcraft.IntegerScale.clamp(value);
+			}
 			Field field = WaylandCraftSettings.class.getDeclaredField(name);
 			field.setInt(this, value);
 		} catch (NoSuchFieldException | IllegalArgumentException | IllegalAccessException e) {

@@ -124,6 +124,12 @@ public class WaylandCraftSettingsManager {
 	public void readSettings() {
 		try(FileReader reader = new FileReader(settingsFile)) {
 			wlc.settings = gson.fromJson(reader, WaylandCraftSettings.class);
+			if(wlc.settings == null) {
+				wlc.settings = new WaylandCraftSettings();
+			}
+			// Normalize scale after load (old files / invalid values → ≥ 1).
+			int scale = wlc.settings.getOutputScale();
+			wlc.settings.setIntSetting(WaylandCraftSettings.OUTPUT_SCALE, scale);
 		} catch(IOException e) {
 			e.printStackTrace();
 		}

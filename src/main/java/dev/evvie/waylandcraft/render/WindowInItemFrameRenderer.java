@@ -31,8 +31,8 @@ public class WindowInItemFrameRenderer {
 		float scale = 1.0f / resolution;
 		poseStack.scale(scale, scale, 1.0f);
 		
-		int x = -toplevel.framebuffer.getXOff() - toplevel.geometry.x();
-		int y = -toplevel.framebuffer.getYOff() - toplevel.geometry.y();
+		int x = dev.evvie.waylandcraft.WindowGeometryMapping.renderOffsetX(toplevel.framebuffer.getXOff(), toplevel.geometry.x());
+		int y = dev.evvie.waylandcraft.WindowGeometryMapping.renderOffsetY(toplevel.framebuffer.getYOff(), toplevel.geometry.y());
 		int w = toplevel.framebuffer.getWidth();
 		int h = toplevel.framebuffer.getHeight();
 		
