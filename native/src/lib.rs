@@ -112,10 +112,10 @@ impl WLCState {
         let compositor_state = CompositorState::new::<WLCState>(&disp);
         let shm_state = ShmState::new::<WLCState>(&disp, vec![]);
         let xdg_state = XdgShellState::new::<WLCState>(&disp);
-        // Prefer client-side decorations: we do not paint server titlebars.
+        // Prefer server-side decorations: compositor paints system chrome.
         let xdg_decoration_state = XdgDecorationState::new::<WLCState>(&disp);
         let kde_decoration_state =
-            KdeDecorationState::new::<WLCState>(&disp, KdeDefaultMode::Client);
+            KdeDecorationState::new::<WLCState>(&disp, KdeDefaultMode::Server);
         let viewporter_state = ViewporterState::new::<WLCState>(&disp);
         let single_pixel_buffer_state =
             SinglePixelBufferState::new::<WLCState>(&disp);
@@ -291,20 +291,21 @@ impl XdgShellHandler for WLCState {
     }
 }
 
-/// Prefer client-side decorations — this compositor does not draw SSD.
+/// Prefer server-side decorations — compositor draws system chrome for
+/// Spotify/Electron and other clients that expect SSD.
 ///
 /// Pattern matches smithay anvil:
-/// - `new_decoration`: set pending ClientSide only (no configure)
+/// - `new_decoration`: set pending ServerSide only (no configure)
 /// - `request_mode` / `unset_mode`: set mode, then `send_pending_configure`
 ///   only if the initial configure was already sent
 ///
 /// Do **not** call `send_configure()` from decoration handlers: forcing a
 /// configure on every set_mode races clients during map and freezes the
 /// Minecraft render thread (dispatch + GPU composite thrash).
-fn prefer_client_side_decoration(toplevel: &ToplevelSurface, send_pending: bool) {
+fn prefer_server_side_decoration(toplevel: &ToplevelSurface, send_pending: bool) {
     toplevel.with_pending_state(|state| {
-        // Always ClientSide — we never paint server chrome (Spotify/Electron).
-        state.decoration_mode = Some(XdgDecorationMode::ClientSide);
+        // Always ServerSide — we paint SSD chrome on the display path.
+        state.decoration_mode = Some(XdgDecorationMode::ServerSide);
     });
     if send_pending && toplevel.is_initial_configure_sent() {
         toplevel.send_pending_configure();
@@ -313,15 +314,15 @@ fn prefer_client_side_decoration(toplevel: &ToplevelSurface, send_pending: bool)
 
 impl XdgDecorationHandler for WLCState {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        prefer_client_side_decoration(&toplevel, false);
+        prefer_server_side_decoration(&toplevel, false);
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: XdgDecorationMode) {
-        prefer_client_side_decoration(&toplevel, true);
+        prefer_server_side_decoration(&toplevel, true);
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        prefer_client_side_decoration(&toplevel, true);
+        prefer_server_side_decoration(&toplevel, true);
     }
 }
 
@@ -335,7 +336,7 @@ impl KdeDecorationHandler for WLCState {
         _surface: &WlSurface,
         decoration: &smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::OrgKdeKwinServerDecoration,
     ) {
-        decoration.mode(KdeDecorationMode::Client);
+        decoration.mode(KdeDecorationMode::Server);
     }
 
     fn request_mode(
@@ -344,8 +345,8 @@ impl KdeDecorationHandler for WLCState {
         decoration: &smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::OrgKdeKwinServerDecoration,
         _mode: WEnum<KdeDecorationMode>,
     ) {
-        // Always CSD — no SSD painting. Ignore client SSD requests.
-        decoration.mode(KdeDecorationMode::Client);
+        // Always SSD — compositor paints chrome. Ignore client CSD requests.
+        decoration.mode(KdeDecorationMode::Server);
     }
 }
 

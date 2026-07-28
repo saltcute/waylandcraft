@@ -1,11 +1,12 @@
 package dev.evvie.waylandcraft;
 
 /**
- * Compositor decoration policy. WaylandCraft does not paint server-side
- * titlebars; clients must use client-side decorations (CSD).
+ * Compositor decoration policy. WaylandCraft paints server-side system chrome
+ * (titlebar + frame) for mapped windows, so negotiation settles on
+ * server-side / system decoration mode.
  *
  * <p>Mirrors the native {@code XdgDecorationHandler} / KDE decoration handlers
- * that always configure ClientSide / Client mode.
+ * that configure ServerSide / Server mode.
  */
 public final class DecorationsPolicy {
 	
@@ -18,20 +19,20 @@ public final class DecorationsPolicy {
 	
 	/** Default / preferred mode advertised to clients. */
 	public static Mode preferredMode() {
-		return Mode.CLIENT_SIDE;
+		return Mode.SERVER_SIDE;
 	}
 	
 	/**
-	 * Resolve a client mode request. Always returns {@link Mode#CLIENT_SIDE}
-	 * because SSD is not implemented (avoids Spotify/Electron empty chrome).
+	 * Resolve a client mode request. Always returns {@link Mode#SERVER_SIDE}
+	 * so clients that expect SSD (Spotify/Electron) get compositor chrome.
 	 */
 	public static Mode resolveRequest(Mode clientRequest) {
-		return Mode.CLIENT_SIDE;
+		return Mode.SERVER_SIDE;
 	}
 	
 	/** True if the compositor will honor server-side decorations. */
 	public static boolean supportsServerSide() {
-		return false;
+		return true;
 	}
 	
 }

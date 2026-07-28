@@ -229,6 +229,67 @@ public class RenderUtils {
 		collector.submitCustomGeometry(poseStack, RenderTypes.lines(), new LineStripDraw(points, color, width));
 	}
 	
+	/**
+	 * Draw a solid-color axis-aligned quad in the window plane (local pixel basis).
+	 * {@code origin} is the top-left corner; {@code spanX}/{@code spanY} are the
+	 * full edge vectors (already scaled by localX/localY * pixel size).
+	 */
+	public static void renderSolidQuad(PoseStack poseStack, SubmitNodeCollector collector, Vec3 origin, Vec3 spanX, Vec3 spanY, int argb) {
+		collector.submitCustomGeometry(poseStack, RenderTypes.debugQuads(), new SolidQuadDraw(origin, spanX, spanY, argb));
+	}
+	
+	/**
+	 * Paint minimal SSD chrome around client content: titlebar, borders, accent.
+	 * {@code outerOrigin} is the outer-frame top-left in the same basis as window
+	 * geometry origin; {@code localX}/{@code localY} are one-pixel world vectors.
+	 * {@code contentWidth}/{@code contentHeight} are the client content size in
+	 * logical pixels (not including chrome).
+	 */
+	public static void renderServerChrome(PoseStack poseStack, SubmitNodeCollector collector, Vec3 outerOrigin, Vec3 localX, Vec3 localY, int contentWidth, int contentHeight) {
+		int outerW = dev.evvie.waylandcraft.ServerDecorationChrome.outerWidth(contentWidth);
+		int outerH = dev.evvie.waylandcraft.ServerDecorationChrome.outerHeight(contentHeight);
+		int titleH = dev.evvie.waylandcraft.ServerDecorationChrome.TITLEBAR_HEIGHT;
+		int contentOx = dev.evvie.waylandcraft.ServerDecorationChrome.contentOffsetX();
+		int contentOy = dev.evvie.waylandcraft.ServerDecorationChrome.contentOffsetY();
+		
+		// Full outer frame (border color) as backdrop — sides/bottom remain visible
+		// around the client content drawn on top.
+		renderSolidQuad(poseStack, collector, outerOrigin, localX.scale(outerW), localY.scale(outerH),
+				dev.evvie.waylandcraft.ServerDecorationChrome.BORDER_COLOR);
+		
+		// Titlebar band
+		renderSolidQuad(poseStack, collector, outerOrigin, localX.scale(outerW), localY.scale(titleH),
+				dev.evvie.waylandcraft.ServerDecorationChrome.TITLEBAR_COLOR);
+		
+		// Accent line under titlebar
+		int accentH = 2;
+		Vec3 accentOrigin = outerOrigin.add(localY.scale(titleH - accentH));
+		renderSolidQuad(poseStack, collector, accentOrigin, localX.scale(outerW), localY.scale(accentH),
+				dev.evvie.waylandcraft.ServerDecorationChrome.ACCENT_COLOR);
+		
+		// Dark underlay in the content hole so translucent clients still show a frame.
+		Vec3 contentOrigin = outerOrigin.add(localX.scale(contentOx)).add(localY.scale(contentOy));
+		renderSolidQuad(poseStack, collector, contentOrigin, localX.scale(Math.max(0, contentWidth)), localY.scale(Math.max(0, contentHeight)),
+				0xFF0D0D0D);
+	}
+	
+	private static final record SolidQuadDraw(Vec3 origin, Vec3 spanX, Vec3 spanY, int argb) implements CustomGeometryRenderer {
+		
+		@Override
+		public void render(Pose pose, VertexConsumer buffer) {
+			Vec3 tl = origin;
+			Vec3 bl = tl.add(spanY);
+			Vec3 br = bl.add(spanX);
+			Vec3 tr = tl.add(spanX);
+			
+			buffer.addVertex(pose, tl.toVector3f()).setColor(argb);
+			buffer.addVertex(pose, bl.toVector3f()).setColor(argb);
+			buffer.addVertex(pose, br.toVector3f()).setColor(argb);
+			buffer.addVertex(pose, tr.toVector3f()).setColor(argb);
+		}
+		
+	}
+	
 	private static final record LineStripDraw(Vec3[] points, int color, float width) implements CustomGeometryRenderer {
 		
 		@Override
