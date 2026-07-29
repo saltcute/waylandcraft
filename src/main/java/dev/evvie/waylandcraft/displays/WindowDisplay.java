@@ -6,8 +6,8 @@ import org.lwjgl.glfw.GLFW;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.vertex.PoseStack;
 
-import dev.evvie.waylandcraft.ServerDecorationChrome;
 import dev.evvie.waylandcraft.WaylandCraft;
+import dev.evvie.waylandcraft.WindowGeometryMapping;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow;
 import dev.evvie.waylandcraft.bridge.WLCSurface;
 import dev.evvie.waylandcraft.bridge.WLCToplevel;
@@ -42,27 +42,13 @@ public class WindowDisplay extends AbstractWindowDisplay {
 	}
 	
 	@Override
-	protected boolean usesServerChrome() {
-		// Top-level windows get system chrome when SSD policy is active.
-		// Popups stay content-only. Fullscreen fills the plane without frame.
-		return window instanceof WLCToplevel toplevel && ServerDecorationChrome.shouldDrawForToplevel(toplevel);
-	}
-	
-	@Override
 	public void updateGeometry() {
 		setPixelScale(1.0f / WaylandCraft.instance.settings.getPixelsPerBlock());
-		contentWidth = window.geometry.width();
-		contentHeight = window.geometry.height();
+		// Outer size is content geometry only — no SSD outer-frame expansion.
+		width = window.geometry.width();
+		height = window.geometry.height();
 		geometryX = window.geometry.x();
 		geometryY = window.geometry.y();
-		if(usesServerChrome()) {
-			width = ServerDecorationChrome.outerWidth(contentWidth);
-			height = ServerDecorationChrome.outerHeight(contentHeight);
-		}
-		else {
-			width = contentWidth;
-			height = contentHeight;
-		}
 	}
 	
 	@Override
@@ -83,25 +69,13 @@ public class WindowDisplay extends AbstractWindowDisplay {
 		if(intersection == null) return null;
 		
 		Vec3 hitPos = intersection.world();
-		// Outer-frame local coordinates (includes SSD chrome when active).
+		// Content-local coordinates (outer size == content geometry; no SSD chrome).
 		Vec3 geometryLocal = intersection.local();
-		
-		// Map outer-local → content-local when SSD chrome occupies the border/titlebar.
-		double contentLocalX = geometryLocal.x;
-		double contentLocalY = geometryLocal.y;
-		if(usesServerChrome()) {
-			// Hits on chrome are not client content — report miss for surface input.
-			if(ServerDecorationChrome.isInChrome(geometryLocal.x, geometryLocal.y, contentWidth, contentHeight)) {
-				return new DisplayHitResult(this, null, hitPos, geometryLocal, geometryLocal, null, intersection.dist());
-			}
-			contentLocalX = ServerDecorationChrome.toContentLocalX(geometryLocal.x);
-			contentLocalY = ServerDecorationChrome.toContentLocalY(geometryLocal.y);
-		}
 		
 		// Same CSD mapping as AbstractWindowDisplay render placement (WindowGeometryMapping).
 		Vec3 localCoords = new Vec3(
-				dev.evvie.waylandcraft.WindowGeometryMapping.toSurfaceLocalX(contentLocalX, window.geometry.x()),
-				dev.evvie.waylandcraft.WindowGeometryMapping.toSurfaceLocalY(contentLocalY, window.geometry.y()),
+				WindowGeometryMapping.toSurfaceLocalX(geometryLocal.x, window.geometry.x()),
+				WindowGeometryMapping.toSurfaceLocalY(geometryLocal.y, window.geometry.y()),
 				geometryLocal.z
 		);
 		

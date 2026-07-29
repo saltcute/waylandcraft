@@ -4,10 +4,8 @@ import org.jetbrains.annotations.Nullable;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 
-import dev.evvie.waylandcraft.ServerDecorationChrome;
 import dev.evvie.waylandcraft.WindowGeometryMapping;
 import dev.evvie.waylandcraft.math.WorldPlane;
-import dev.evvie.waylandcraft.render.RenderUtils;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.world.phys.Vec3;
@@ -29,10 +27,6 @@ public abstract class AbstractWindowDisplay {
 	protected int geometryX = 0;
 	protected int geometryY = 0;
 	
-	/** Client content size (geometry); may be smaller than outer {@link #width}/{@link #height} when SSD chrome is active. */
-	protected int contentWidth;
-	protected int contentHeight;
-	
 	private float pixelScale;
 	
 	public AbstractWindowDisplay() {
@@ -43,14 +37,6 @@ public abstract class AbstractWindowDisplay {
 	
 	public abstract void renderFramebuffer(PoseStack poseStack, SubmitNodeCollector collector, Vec3 origin, Vec3 spanX, Vec3 spanY);
 	public abstract @Nullable FramebufferRenderable getFramebuffer();
-	
-	/**
-	 * Whether this display draws compositor SSD chrome around client content.
-	 * Default false (popups / content-only). Top-level windows override when policy supports SSD.
-	 */
-	protected boolean usesServerChrome() {
-		return false;
-	}
 	
 	public void rotate(Vec3 normal, Vec3 down) {
 		this.normal = normal;
@@ -81,7 +67,7 @@ public abstract class AbstractWindowDisplay {
 		return down.scale(pixelScale);
 	}
 	
-	// World coordinates of the window geometry origin (outer frame top-left when SSD)
+	// World coordinates of the window geometry origin (content top-left)
 	public Vec3 origin() {
 		return pivot.add(localX().scale(-width/2)).add(localY().scale(-height/2));
 	}
@@ -119,19 +105,10 @@ public abstract class AbstractWindowDisplay {
 		poseStack.pushPose();
 		poseStack.translate(originRel.x, originRel.y, originRel.z);
 		
-		int chromeOx = 0;
-		int chromeOy = 0;
-		if(usesServerChrome() && ServerDecorationChrome.isActive()) {
-			// Draw system chrome first (outer frame), then client content inset.
-			RenderUtils.renderServerChrome(poseStack, ctx.submitNodeCollector(), Vec3.ZERO, localX, localY, contentWidth, contentHeight);
-			chromeOx = ServerDecorationChrome.contentOffsetX();
-			chromeOy = ServerDecorationChrome.contentOffsetY();
-		}
-		
-		// Shared CSD mapping: same basis as WindowDisplay.intersect pick path,
-		// plus SSD chrome inset so content sits in the content region.
-		int placeX = WindowGeometryMapping.renderOffsetX(xoff, geometryX) + chromeOx;
-		int placeY = WindowGeometryMapping.renderOffsetY(yoff, geometryY) + chromeOy;
+		// Shared CSD mapping: same basis as WindowDisplay.intersect pick path.
+		// Outer size is content geometry only (no compositor SSD chrome).
+		int placeX = WindowGeometryMapping.renderOffsetX(xoff, geometryX);
+		int placeY = WindowGeometryMapping.renderOffsetY(yoff, geometryY);
 		Vec3 bufOffset = localX.scale(placeX).add(localY.scale(placeY));
 		
 		renderFramebuffer(poseStack, ctx.submitNodeCollector(), bufOffset, localX.scale(bufWidth), localY.scale(bufHeight));

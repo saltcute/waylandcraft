@@ -8,21 +8,12 @@ use crate::xdg_spec::XDGSpecHelper;
 use smithay::{
     backend::allocator::dmabuf::Dmabuf,
     delegate_compositor, delegate_dmabuf, delegate_shm,
-    delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_decoration,
-    delegate_xdg_shell, delegate_kde_decoration,
+    delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_shell,
     reexports::{
         calloop::{self, EventLoop, generic::Generic as GenericEvent},
-        wayland_protocols::{
-            xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode
-                as XdgDecorationMode,
-            xdg::shell::server::xdg_toplevel::ResizeEdge,
-        },
-        wayland_protocols_misc::server_decoration::server::{
-            org_kde_kwin_server_decoration::Mode as KdeDecorationMode,
-            org_kde_kwin_server_decoration_manager::Mode as KdeDefaultMode,
-        },
+        wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
         wayland_server::{
-            self, Display, DisplayHandle, WEnum,
+            self, Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::{
                 wl_buffer::WlBuffer, wl_output::WlOutput, wl_seat::WlSeat,
@@ -40,13 +31,9 @@ use smithay::{
             DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
             ImportNotifier,
         },
-        shell::{
-            kde::decoration::{KdeDecorationHandler, KdeDecorationState},
-            xdg::{
-                decoration::{XdgDecorationHandler, XdgDecorationState},
-                PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler,
-                XdgShellState,
-            },
+        shell::xdg::{
+            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler,
+            XdgShellState,
         },
         shm::{ShmHandler, ShmState},
         single_pixel_buffer::SinglePixelBufferState,
@@ -83,8 +70,6 @@ pub struct WLCState {
     pub compositor_state: CompositorState,
     pub shm_state: ShmState,
     pub xdg_state: XdgShellState,
-    pub xdg_decoration_state: XdgDecorationState,
-    pub kde_decoration_state: KdeDecorationState,
     pub viewporter_state: ViewporterState,
     pub single_pixel_buffer_state: SinglePixelBufferState,
     pub dmabuf_state: DmabufState,
@@ -112,10 +97,6 @@ impl WLCState {
         let compositor_state = CompositorState::new::<WLCState>(&disp);
         let shm_state = ShmState::new::<WLCState>(&disp, vec![]);
         let xdg_state = XdgShellState::new::<WLCState>(&disp);
-        // Prefer server-side decorations: compositor paints system chrome.
-        let xdg_decoration_state = XdgDecorationState::new::<WLCState>(&disp);
-        let kde_decoration_state =
-            KdeDecorationState::new::<WLCState>(&disp, KdeDefaultMode::Server);
         let viewporter_state = ViewporterState::new::<WLCState>(&disp);
         let single_pixel_buffer_state =
             SinglePixelBufferState::new::<WLCState>(&disp);
@@ -138,8 +119,6 @@ impl WLCState {
             compositor_state,
             shm_state,
             xdg_state,
-            xdg_decoration_state,
-            kde_decoration_state,
             viewporter_state,
             single_pixel_buffer_state,
             dmabuf_state,
@@ -291,65 +270,6 @@ impl XdgShellHandler for WLCState {
     }
 }
 
-/// Prefer server-side decorations — compositor draws system chrome for
-/// Spotify/Electron and other clients that expect SSD.
-///
-/// Pattern matches smithay anvil:
-/// - `new_decoration`: set pending ServerSide only (no configure)
-/// - `request_mode` / `unset_mode`: set mode, then `send_pending_configure`
-///   only if the initial configure was already sent
-///
-/// Do **not** call `send_configure()` from decoration handlers: forcing a
-/// configure on every set_mode races clients during map and freezes the
-/// Minecraft render thread (dispatch + GPU composite thrash).
-fn prefer_server_side_decoration(toplevel: &ToplevelSurface, send_pending: bool) {
-    toplevel.with_pending_state(|state| {
-        // Always ServerSide — we paint SSD chrome on the display path.
-        state.decoration_mode = Some(XdgDecorationMode::ServerSide);
-    });
-    if send_pending && toplevel.is_initial_configure_sent() {
-        toplevel.send_pending_configure();
-    }
-}
-
-impl XdgDecorationHandler for WLCState {
-    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        prefer_server_side_decoration(&toplevel, false);
-    }
-
-    fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: XdgDecorationMode) {
-        prefer_server_side_decoration(&toplevel, true);
-    }
-
-    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        prefer_server_side_decoration(&toplevel, true);
-    }
-}
-
-impl KdeDecorationHandler for WLCState {
-    fn kde_decoration_state(&self) -> &KdeDecorationState {
-        &self.kde_decoration_state
-    }
-
-    fn new_decoration(
-        &mut self,
-        _surface: &WlSurface,
-        decoration: &smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::OrgKdeKwinServerDecoration,
-    ) {
-        decoration.mode(KdeDecorationMode::Server);
-    }
-
-    fn request_mode(
-        &mut self,
-        _surface: &WlSurface,
-        decoration: &smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::OrgKdeKwinServerDecoration,
-        _mode: WEnum<KdeDecorationMode>,
-    ) {
-        // Always SSD — compositor paints chrome. Ignore client CSD requests.
-        decoration.mode(KdeDecorationMode::Server);
-    }
-}
-
 pub(crate) struct WLCClient {
     compositor_state: CompositorClientState,
 }
@@ -424,8 +344,6 @@ pub(crate) fn wlc_init(
 delegate_compositor!(WLCState);
 delegate_shm!(WLCState);
 delegate_xdg_shell!(WLCState);
-delegate_xdg_decoration!(WLCState);
-delegate_kde_decoration!(WLCState);
 delegate_viewporter!(WLCState);
 delegate_single_pixel_buffer!(WLCState);
 delegate_dmabuf!(WLCState);

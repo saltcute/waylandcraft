@@ -1,6 +1,5 @@
 package dev.evvie.waylandcraft;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -12,73 +11,88 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Policy + structural checks for decoration negotiation (Spotify/Electron SSD).
+ * Structural checks for pre-d77b08b decorator policy: no xdg/KDE decoration
+ * globals, no ServerSide/ClientSide negotiation, no SSD chrome types on the
+ * shipped path.
  */
 public class DecorationsPolicyTest {
 	
 	@Test
-	void alwaysServerSide() {
-		assertEquals(DecorationsPolicy.Mode.SERVER_SIDE, DecorationsPolicy.preferredMode());
-		assertEquals(DecorationsPolicy.Mode.SERVER_SIDE,
-				DecorationsPolicy.resolveRequest(DecorationsPolicy.Mode.SERVER_SIDE));
-		assertEquals(DecorationsPolicy.Mode.SERVER_SIDE,
-				DecorationsPolicy.resolveRequest(DecorationsPolicy.Mode.CLIENT_SIDE));
-		assertTrue(DecorationsPolicy.supportsServerSide());
+	void nativeDoesNotAdvertiseDecorationGlobals() throws IOException {
+		Path lib = projectRoot().resolve("native/src/lib.rs");
+		String src = Files.readString(lib, StandardCharsets.UTF_8);
+		assertFalse(src.contains("XdgDecorationState"),
+				"must not create zxdg_decoration_manager_v1 via XdgDecorationState");
+		assertFalse(src.contains("delegate_xdg_decoration"),
+				"must not delegate xdg decoration protocol");
+		assertFalse(src.contains("KdeDecorationState"),
+				"must not advertise KDE server-decoration global");
+		assertFalse(src.contains("delegate_kde_decoration"),
+				"must not delegate KDE decoration protocol");
+		assertFalse(src.contains("XdgDecorationHandler"),
+				"must not implement XdgDecorationHandler");
+		assertFalse(src.contains("KdeDecorationHandler"),
+				"must not implement KdeDecorationHandler");
+		assertFalse(src.contains("prefer_server_side_decoration"),
+				"must not force ServerSide decoration mode");
+		assertFalse(src.contains("prefer_client_side_decoration"),
+				"must not force ClientSide decoration mode");
+		assertFalse(src.contains("decoration_mode"),
+				"must not set xdg decoration_mode on toplevel state");
 	}
 	
 	@Test
-	void nativeAdvertisesDecorationGlobals() throws IOException {
-		Path lib = projectRoot().resolve("native/src/lib.rs");
-		String src = Files.readString(lib, StandardCharsets.UTF_8);
-		assertTrue(src.contains("XdgDecorationState"),
-				"must create zxdg_decoration_manager_v1 via XdgDecorationState");
-		assertTrue(src.contains("delegate_xdg_decoration"),
-				"must delegate xdg decoration protocol");
-		assertTrue(src.contains("ServerSide") || src.contains("Mode::ServerSide"),
-				"must configure ServerSide decorations");
-		assertTrue(src.contains("KdeDecorationState") || src.contains("kde_decoration"),
-				"must advertise KDE server-decoration global for Electron");
-		assertTrue(src.contains("Mode::Server") || src.contains("KdeDefaultMode::Server"),
-				"KDE default mode must be Server (SSD)");
-		assertFalse(src.contains("KdeDefaultMode::Client"),
-				"KDE default must not force Client (CSD-only)");
-	}
-	
-	/**
-	 * Decorations path must match smithay anvil: pending mode + send_pending_configure
-	 * on set_mode/unset_mode only. Forced send_configure() during decoration
-	 * negotiation freezes the game when any window maps.
-	 */
-	@Test
-	void nativeDecorationPathMatchesAnvil() throws IOException {
-		Path lib = projectRoot().resolve("native/src/lib.rs");
-		String src = Files.readString(lib, StandardCharsets.UTF_8);
-		int helper = src.indexOf("fn prefer_server_side_decoration");
-		assertTrue(helper >= 0, "must have prefer_server_side_decoration helper on live path");
-		int bodyEnd = src.indexOf("\nimpl ", helper);
-		if (bodyEnd < 0) bodyEnd = src.length();
-		String helperBody = src.substring(helper, bodyEnd);
-		assertTrue(helperBody.contains("send_pending_configure"),
-				"decoration helper must use send_pending_configure (anvil pattern)");
-		// Must not force unconditional send_configure inside the decoration helper.
-		assertFalse(helperBody.contains("toplevel.send_configure()"),
-				"decoration helper must not call send_configure() (freezes window map)");
-		assertTrue(helperBody.contains("ServerSide") || helperBody.contains("Mode::ServerSide"),
-				"decoration helper must set ServerSide mode");
-		assertTrue(src.contains("prefer_server_side_decoration(&toplevel, true)"),
-				"request_mode/unset_mode must request pending configure");
-		assertTrue(src.contains("prefer_server_side_decoration(&toplevel, false)"),
-				"new_decoration must not send configure");
+	void decoratorOnlyJavaTypesAreNotShipped() {
+		Path root = projectRoot();
+		assertFalse(Files.isRegularFile(root.resolve(
+				"src/main/java/dev/evvie/waylandcraft/ServerDecorationChrome.java")),
+				"ServerDecorationChrome must not ship");
+		assertFalse(Files.isRegularFile(root.resolve(
+				"src/main/java/dev/evvie/waylandcraft/DecorationsPolicy.java")),
+				"DecorationsPolicy must not ship");
 	}
 	
 	@Test
-	void nativeConfiguresKdeServerMode() throws IOException {
-		Path lib = projectRoot().resolve("native/src/lib.rs");
-		String src = Files.readString(lib, StandardCharsets.UTF_8);
-		assertTrue(src.contains("KdeDecorationMode::Server"),
-				"KDE request/new handlers must configure Server mode");
-		assertTrue(src.contains("KdeDefaultMode::Server"),
-				"KDE manager default must advertise Server");
+	void displayPathsDoNotDrawSsdChrome() throws IOException {
+		Path root = projectRoot();
+		String abstractSrc = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/displays/AbstractWindowDisplay.java"),
+				StandardCharsets.UTF_8);
+		String windowSrc = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/displays/WindowDisplay.java"),
+				StandardCharsets.UTF_8);
+		String wm = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/gui/WindowManagerScreen.java"),
+				StandardCharsets.UTF_8);
+		String hud = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/gui/WaylandHudRenderer.java"),
+				StandardCharsets.UTF_8);
+		String renderUtils = Files.readString(
+				root.resolve("src/main/java/dev/evvie/waylandcraft/render/RenderUtils.java"),
+				StandardCharsets.UTF_8);
+		
+		assertFalse(abstractSrc.contains("ServerDecorationChrome")
+				|| abstractSrc.contains("renderServerChrome")
+				|| abstractSrc.contains("usesServerChrome"),
+				"world display must not draw SSD chrome");
+		assertFalse(windowSrc.contains("ServerDecorationChrome")
+				|| windowSrc.contains("outerWidth")
+				|| windowSrc.contains("isInChrome"),
+				"window pick/layout must not expand for SSD chrome");
+		assertFalse(wm.contains("ServerDecorationChrome")
+				|| wm.contains("renderServerChrome2D"),
+				"WindowManagerScreen must not paint SSD chrome");
+		assertFalse(hud.contains("ServerDecorationChrome")
+				|| hud.contains("renderServerChrome2D"),
+				"HUD path must not paint SSD chrome");
+		assertFalse(renderUtils.contains("renderServerChrome")
+				|| renderUtils.contains("renderServerChrome2D"),
+				"RenderUtils must not provide SSD chrome helpers");
+		// HiDPI geometry mapping retained on the live path.
+		assertTrue(abstractSrc.contains("WindowGeometryMapping"),
+				"world path must keep WindowGeometryMapping");
+		assertTrue(windowSrc.contains("WindowGeometryMapping"),
+				"pick path must keep WindowGeometryMapping");
 	}
 	
 	private static Path projectRoot() {
