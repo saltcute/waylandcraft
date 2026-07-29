@@ -27,6 +27,7 @@ import dev.evvie.waylandcraft.grabs.MoveGrab;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap.ImplicitGrab;
 import dev.evvie.waylandcraft.grabs.ResizeGrab;
+import dev.evvie.waylandcraft.grabs.WindowGrab;
 import dev.evvie.waylandcraft.gui.AppLauncherScreen;
 import dev.evvie.waylandcraft.gui.WaylandHudRenderer;
 import dev.evvie.waylandcraft.gui.WindowManagerScreen;
@@ -39,6 +40,7 @@ import dev.evvie.waylandcraft.render.model.WindowItemModel;
 import dev.evvie.waylandcraft.settings.WaylandCraftSettings;
 import dev.evvie.waylandcraft.settings.WaylandCraftSettingsManager;
 import dev.evvie.waylandcraft.utils.CursorShape;
+import dev.evvie.waylandcraft.utils.WaylandCraftUtils;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.item.v1.ItemTooltipCallback;
@@ -89,6 +91,10 @@ public class WaylandCraft implements ClientModInitializer {
 	public KeyMapping keyOpenScreen;
 	public KeyMapping keyOpenAppLauncher;
 	public KeyMapping keyCaptureKeyboard;
+	/** Toggle player-follow lock on the targeted world window. */
+	public KeyMapping keyFollowWindow;
+	/** Start exclusive window placement grab (same as Window Manager "Grab"). */
+	public KeyMapping keyGrabWindow;
 	
 	public WindowInHandRenderer windowInHandRenderer = new WindowInHandRenderer();
 	public WindowInItemFrameRenderer windowInItemFrameRenderer = new WindowInItemFrameRenderer();
@@ -159,9 +165,13 @@ public class WaylandCraft implements ClientModInitializer {
 		
 		instance = this;
 		
-		keyOpenScreen = KeyMappingHelper.registerKeyMapping(new KeyMapping("waylandcraft.key.windowManager", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, KEYBIND_CATEGORY));
+		// Grab owns default B (objective). Window manager moved off B so both binds work.
+		keyGrabWindow = KeyMappingHelper.registerKeyMapping(new KeyMapping("waylandcraft.key.grabWindow", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, KEYBIND_CATEGORY));
+		keyOpenScreen = KeyMappingHelper.registerKeyMapping(new KeyMapping("waylandcraft.key.windowManager", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_N, KEYBIND_CATEGORY));
 		keyOpenAppLauncher = KeyMappingHelper.registerKeyMapping(new KeyMapping("waylandcraft.key.appLauncher", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_V, KEYBIND_CATEGORY));
 		keyCaptureKeyboard = KeyMappingHelper.registerKeyMapping(new KeyMapping("waylandcraft.key.captureKeyboard", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G, KEYBIND_CATEGORY));
+		// Y — unused by sibling binds (B/N/V/G); rebindable in Controls.
+		keyFollowWindow = KeyMappingHelper.registerKeyMapping(new KeyMapping("waylandcraft.key.followWindow", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_Y, KEYBIND_CATEGORY));
 		
 		WindowItemModel.register();
 		
@@ -219,6 +229,14 @@ public class WaylandCraft implements ClientModInitializer {
 	public void renderWorld(LevelRenderContext ctx) {
 		if(bridge == null) return;
 		
+		// Per-frame follow with interpolated eye position (partial ticks) so
+		// locked windows track smoothly between client ticks — applied before
+		// submit so this frame's draw uses the current pose.
+		Minecraft minecraft = Minecraft.getInstance();
+		if(minecraft.player != null) {
+			applyFollowLocks(minecraft);
+		}
+		
 		displays.forEach((d) -> d.render(ctx));
 	}
 	
@@ -248,6 +266,13 @@ public class WaylandCraft implements ClientModInitializer {
 		updateDisplayRequests();
 		
 		itemManager.giveItemsIfMissing(bridge.getNewToplevels());
+		
+		// Also keep locks clean and poses current on the world-update path
+		// (invalid displays drop out; pose stays ready between submits).
+		Minecraft minecraft = Minecraft.getInstance();
+		if(minecraft.player != null) {
+			applyFollowLocks(minecraft);
+		}
 		
 		boolean inWMScreen = Minecraft.getInstance().gui.screen() instanceof WindowManagerScreen;
 		
@@ -320,6 +345,103 @@ public class WaylandCraft implements ClientModInitializer {
 		}
 		else if(keyCaptureKeyboard.consumeClick()) {
 			enableKeyboardCapture(false);
+		}
+		else if(keyFollowWindow != null && keyFollowWindow.consumeClick()) {
+			toggleFollowLock(minecraft);
+		}
+		else if(keyGrabWindow != null && keyGrabWindow.consumeClick()) {
+			startWindowGrab(minecraft);
+		}
+	}
+	
+	/**
+	 * Grab hotkey: start exclusive placement grab on the world window the player
+	 * is looking at — the same target that currently receives mouse input
+	 * ({@link #hoveredDisplay}). If nothing is looked at (or out of range / not
+	 * mouse-eligible), this is a no-op. Does <em>not</em> fall back to most-recent
+	 * focus. Window Manager screen "Grab" still uses its selected/focused toplevel.
+	 */
+	void startWindowGrab(Minecraft minecraft) {
+		applyGrabHotkey(hoveredDisplay);
+	}
+	
+	/**
+	 * Resolve the look-at / mouse-hover window for the grab hotkey.
+	 * Uses the same eligibility standard as pointer input: only a non-null
+	 * {@link #hoveredDisplay} (in-range, not occluded, interaction-eligible).
+	 *
+	 * @return the hovered display, or null if the hotkey should no-op
+	 */
+	static @Nullable WindowDisplay resolveGrabHotkeyTarget(@Nullable DisplayHitResult hovered) {
+		if(hovered == null) return null;
+		return hovered.target;
+	}
+	
+	/**
+	 * Core grab-hotkey action used by {@link #startWindowGrab}. Package-visible
+	 * so unit tests can drive synthetic hover without a live client.
+	 *
+	 * @return the display that was grabbed, or null if no-op
+	 */
+	@Nullable WindowDisplay applyGrabHotkey(@Nullable DisplayHitResult hover) {
+		WindowDisplay target = resolveGrabHotkeyTarget(hover);
+		if(target == null) return null;
+		startExclusiveWindowGrab(target);
+		return target;
+	}
+	
+	/**
+	 * Start exclusive {@link WindowGrab} on a world display (same machinery as
+	 * the WM Grab button uses for a resolved display). Package-visible for tests.
+	 */
+	void startExclusiveWindowGrab(WindowDisplay target) {
+		pointerGrabs.startExclusive(new WindowGrab(target, 0));
+	}
+	
+	/**
+	 * Toggle player-follow lock on the currently targeted world window.
+	 * Press again on a locked window to unlock; with no target, unlock all
+	 * so the lock is always reachable.
+	 */
+	void toggleFollowLock(Minecraft minecraft) {
+		if(minecraft.player == null) return;
+		if(hoveredDisplay != null) {
+			WindowDisplay target = hoveredDisplay.target;
+			if(target.isFollowLocked()) {
+				target.clearFollowLock();
+			}
+			else {
+				LocalPlayer player = minecraft.player;
+				Vec3 pos = WaylandCraftUtils.getPosition(player);
+				Vec3 look = WaylandCraftUtils.getLookVector(player);
+				Vec3 up = WaylandCraftUtils.getUpVector(player);
+				target.lockFollow(pos, look, up);
+			}
+			return;
+		}
+		// No hover: clear every follow lock so unlock stays reachable.
+		for(WindowDisplay display : displays) {
+			display.clearFollowLock();
+		}
+	}
+	
+	/**
+	 * Reposition every follow-locked world window using a world-fixed offset from
+	 * the (interpolated) player eye. Invalid windows drop out of the lock cleanly.
+	 * Intended for the per-frame {@link #renderWorld} / {@link #updateWorld} path
+	 * so motion is smooth between client ticks.
+	 */
+	void applyFollowLocks(Minecraft minecraft) {
+		if(minecraft.player == null) return;
+		LocalPlayer player = minecraft.player;
+		// Interpolated eye position (partial ticks) for continuous motion between ticks.
+		Vec3 pos = WaylandCraftUtils.getPosition(player);
+		for(WindowDisplay display : displays) {
+			if(!display.isValid()) {
+				display.clearFollowLock();
+				continue;
+			}
+			display.applyFollowIfLocked(pos);
 		}
 	}
 	

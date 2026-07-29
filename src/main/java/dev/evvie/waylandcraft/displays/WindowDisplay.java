@@ -7,6 +7,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.vertex.PoseStack;
 
 import dev.evvie.waylandcraft.WaylandCraft;
+import dev.evvie.waylandcraft.WindowFollowPose;
 import dev.evvie.waylandcraft.WindowGeometryMapping;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow;
 import dev.evvie.waylandcraft.bridge.WLCSurface;
@@ -31,9 +32,92 @@ public class WindowDisplay extends AbstractWindowDisplay {
 	public final WLCAbstractWindow window;
 	public double anchorDistance = 2.0;
 	
+	/** Non-null while this window is locked to follow the player. */
+	private @Nullable WindowFollowPose.RelativeLock followLock = null;
+	
+	/**
+	 * When true, {@link #applyFollowIfLocked} is a no-op so exclusive placement
+	 * grab can move the window without the follow lock snapping it back.
+	 * Follow stays locked; re-capture updates the offset after the move.
+	 */
+	private boolean followApplyPaused = false;
+	
 	public WindowDisplay(WLCAbstractWindow window) {
 		this.window = window;
 		this.updateGeometry();
+	}
+	
+	/** Whether this world window is currently locked to follow the player. */
+	public boolean isFollowLocked() {
+		return followLock != null;
+	}
+	
+	public @Nullable WindowFollowPose.RelativeLock getFollowLock() {
+		return followLock;
+	}
+	
+	/** Store a player-relative lock (or clear with null). */
+	public void setFollowLock(@Nullable WindowFollowPose.RelativeLock lock) {
+		this.followLock = lock;
+	}
+	
+	public void clearFollowLock() {
+		this.followLock = null;
+		this.followApplyPaused = false;
+	}
+	
+	/**
+	 * Pause or resume follow re-apply (used while exclusive placement grab is
+	 * moving this window). Does not clear the lock.
+	 */
+	public void setFollowApplyPaused(boolean paused) {
+		this.followApplyPaused = paused;
+	}
+	
+	public boolean isFollowApplyPaused() {
+		return followApplyPaused;
+	}
+	
+	/**
+	 * Capture current pivot/orientation as a world-fixed offset from the player
+	 * eye and enter follow-lock. Look is ignored — orientation stays absolute.
+	 */
+	public void lockFollow(Vec3 playerPos, Vec3 playerLook, Vec3 playerUp) {
+		this.followLock = WindowFollowPose.capture(playerPos, pivot, normal(), down());
+	}
+	
+	/** Capture world-fixed offset from player eye and enter follow-lock. */
+	public void lockFollow(Vec3 playerPos) {
+		this.followLock = WindowFollowPose.capture(playerPos, pivot, normal(), down());
+	}
+	
+	/**
+	 * While follow-locked, re-store the world-fixed offset from the current
+	 * pivot/orientation (e.g. after the player grab-moved the window). Follow
+	 * stays on; subsequent apply uses the new offset.
+	 */
+	public void recaptureFollowLock(Vec3 playerPos) {
+		if(followLock == null) return;
+		this.followLock = WindowFollowPose.capture(playerPos, pivot, normal(), down());
+	}
+	
+	/**
+	 * If follow-locked, re-apply the world-fixed offset so the window tracks
+	 * player location without rotating with the camera.
+	 */
+	public void applyFollowIfLocked(Vec3 playerPos, Vec3 playerLook, Vec3 playerUp) {
+		applyFollowIfLocked(playerPos);
+	}
+	
+	/**
+	 * If follow-locked and not paused for placement grab, re-apply world-fixed
+	 * offset from the player eye.
+	 */
+	public void applyFollowIfLocked(Vec3 playerPos) {
+		if(followLock == null || followApplyPaused) return;
+		WindowFollowPose.AppliedPose pose = WindowFollowPose.apply(playerPos, followLock);
+		this.pivot = pose.pivot();
+		this.rotate(pose.normal(), pose.down());
 	}
 	
 	@Override
@@ -131,6 +215,12 @@ public class WindowDisplay extends AbstractWindowDisplay {
 		}
 		else if(ctrlDown) {
 			this.trySnapToOtherWindows(pos, view);
+		}
+		
+		// Keep follow lock in sync with the new placement so release / next
+		// apply uses the moved offset (not the pre-grab one).
+		if(isFollowLocked()) {
+			recaptureFollowLock(pos);
 		}
 	}
 	
