@@ -399,30 +399,45 @@ public class WaylandCraft implements ClientModInitializer {
 	}
 	
 	/**
-	 * Toggle player-follow lock on the currently targeted world window.
-	 * Press again on a locked window to unlock; with no target, unlock all
-	 * so the lock is always reachable.
+	 * Toggle player-follow lock on the world window the player is looking at
+	 * (same mouse-eligible {@link #hoveredDisplay} as pointer input). Looking at
+	 * a locked window unlocks it; looking at an unlocked window locks it.
+	 * If nothing is looked at, this is a no-op — other windows' locks are not
+	 * cleared or changed.
 	 */
 	void toggleFollowLock(Minecraft minecraft) {
 		if(minecraft.player == null) return;
-		if(hoveredDisplay != null) {
-			WindowDisplay target = hoveredDisplay.target;
-			if(target.isFollowLocked()) {
-				target.clearFollowLock();
-			}
-			else {
-				LocalPlayer player = minecraft.player;
-				Vec3 pos = WaylandCraftUtils.getPosition(player);
-				Vec3 look = WaylandCraftUtils.getLookVector(player);
-				Vec3 up = WaylandCraftUtils.getUpVector(player);
-				target.lockFollow(pos, look, up);
-			}
-			return;
+		LocalPlayer player = minecraft.player;
+		Vec3 pos = WaylandCraftUtils.getPosition(player);
+		applyFollowHotkey(hoveredDisplay, pos);
+	}
+	
+	/**
+	 * Core follow-hotkey action: toggle lock on the look-at / hover window, or
+	 * no-op when hover is absent. Package-visible so unit tests can drive
+	 * synthetic hover without a live client.
+	 *
+	 * @return the display that was toggled, or null if no-op
+	 */
+	@Nullable WindowDisplay applyFollowHotkey(@Nullable DisplayHitResult hover, Vec3 playerEye) {
+		WindowDisplay target = resolveFollowHotkeyTarget(hover);
+		if(target == null) return null;
+		if(target.isFollowLocked()) {
+			target.clearFollowLock();
 		}
-		// No hover: clear every follow lock so unlock stays reachable.
-		for(WindowDisplay display : displays) {
-			display.clearFollowLock();
+		else {
+			target.lockFollow(playerEye);
 		}
+		return target;
+	}
+	
+	/**
+	 * Resolve the look-at window for the follow hotkey — same mouse-eligible
+	 * hover standard as pointer input. Null means the hotkey should no-op.
+	 */
+	static @Nullable WindowDisplay resolveFollowHotkeyTarget(@Nullable DisplayHitResult hovered) {
+		if(hovered == null) return null;
+		return hovered.target;
 	}
 	
 	/**
